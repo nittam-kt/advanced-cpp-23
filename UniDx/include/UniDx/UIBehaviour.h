@@ -17,7 +17,7 @@ public:
 	virtual void Render(const Matrix& proj) const {}
 
 protected:
-	Canvas* owner;
+	Canvas* owner = nullptr;
 };
 
 }

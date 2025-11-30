@@ -1,6 +1,7 @@
 ﻿#include "pch.h"
 #include <UniDx/LightManager.h>
 
+#include <algorithm>
 #include <UniDx/Light.h>
 #include <UniDx/D3DManager.h>
 
@@ -9,6 +10,62 @@ namespace UniDx
 {
 
 using namespace std;
+
+
+// 指定位置に対するライトの影響の強さを計算
+// α値の強さと距離減衰を使う
+float getLightIntensity(Vector3 position, const PointLightBuffer& light)
+{
+    return light.color.w * (1.0f - (position - light.positionW).Length() * light.rangeInv);
+}
+float getLightIntensity(Vector3 position, const SpotLightBuffer& light)
+{
+    return light.color.w * (1.0f - (position - light.positionW).Length() * light.rangeInv);
+}
+
+// ソート済みのTのvectorと比較floatのvectorに対して、比較floatを追加してソート
+template<typename T>
+void addSort(vector<T>& valueVec, vector<float>& compVec, float comp)
+{
+    compVec.push_back(comp);
+    assert(valueVec.size() >= compVec.size());
+    for (size_t i = compVec.size() - 1; i >= 1; i--)
+    {
+        if (compVec[i] > compVec[i - 1])
+        {
+            std::swap(compVec[i], compVec[i - 1]);
+            std::swap(valueVec[i], valueVec[i - 1]);
+        }
+        else
+        {
+            return; // 終了
+        }
+    }
+}
+
+// コンストラクタ
+LightManager::LightManager()
+{
+    // 環境光
+    ambientColor = Color(0.2f, 0.2f, 0.2f, 1.0f);
+
+    // ライトのリザーブ
+    pointLights.reserve(PointLightCountMax);
+    spotLights.reserve(SpotLightCountMax);
+
+    // 定数バッファ作成
+    D3D11_BUFFER_DESC desc{};
+    desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+    desc.CPUAccessFlags = 0;
+    desc.Usage = D3D11_USAGE_DEFAULT;
+
+    desc.ByteWidth = sizeof(ConstantBufferLightPerFrame);
+    D3DManager::getInstance()->GetDevice()->CreateBuffer(&desc, nullptr, constantBufferLightPerFrame.GetAddressOf());
+
+    desc.ByteWidth = sizeof(ConstantBufferLightPerObject);
+    D3DManager::getInstance()->GetDevice()->CreateBuffer(&desc, nullptr, constantBufferLightPerObject.GetAddressOf());
+}
+
 
 // Lightを登録
 bool LightManager::registerLight(Light* light)
@@ -66,84 +123,142 @@ void LightManager::updateLightCBuffer()
         }
     }
 
-    // --- GPULight作成 ---
-    gpuLights_.clear();
-    gpuLights_.reserve(lights_.size());
+    // 定数バッファ更新
+    ConstantBufferLightPerFrame cb{};
+    cb.ambientColor = ambientColor;
+    cb.directionalColor = Color(0.0f, 0.0f, 0.0f, 0.0f);
+    cb.directionW = Vector3::Forward;
+
+    float maxIntensity = 0.0f;
+    for (vector<Light*>::iterator it = lights_.begin(); it != lights_.end(); ++it)
+    {
+        (*it)->color.w = (*it)->intensity; // 全ライトのaに強さを入れる
+
+        if ((*it)->type == LightType_Directional && (*it)->color.w >= maxIntensity)
+        {
+            cb.directionalColor = (*it)->color;
+            cb.directionW = (*it)->transform->forward;
+        }
+    }
+    D3DManager::getInstance()->GetContext()->UpdateSubresource(constantBufferLightPerFrame.Get(), 0, nullptr, &cb, 0, 0);
+
+    ID3D11Buffer* cbs[1] = { constantBufferLightPerFrame.Get() };
+    D3DManager::getInstance()->GetContext()->PSSetConstantBuffers(CB_LightPerFrame, 1, cbs);
+}
+
+void LightManager::updateLightCBufferObject(Vector3 objPos, int lightCountMax)
+{
+    int pointLightMax = std::clamp(lightCountMax, 0, PointLightCountMax);
+    int spotLightMax = std::clamp(lightCountMax, 0, SpotLightCountMax);
+
+    pointLights.clear();
+    spotLights.clear();
+    pointLightIntensity.clear();
+    spotLightIntensity.clear();
+
     for (Light* l : lights_)
     {
-        GPULight g{};
-        g.color = l->color;
-        g.color.A(l->intensity);
-        g.type = static_cast<uint32_t>(l->type);
-
         auto world = l->transform->getLocalToWorldMatrix();       // ワールド行列取得
+        float rangeInv = l->range != 0.0f ? 1.0f / l->range : 0.0f;
 
         switch (l->type)
         {
-        case LightType_Directional:
-            g.positionOrDirWS = -world.Forward(); // 方向
-            break;
+        // ポイントライトの追加
         case LightType_Point:
-            g.positionOrDirWS = world.Translation();
-            g.rangeOrInvCos = 1.0f / l->range;
+            if (pointLights.size() < pointLightMax)
+            {
+                pointLights.emplace_back(l->color, l->transform->position, rangeInv);
+            }
+            else
+            {
+                // 影響度がなければ作成して並び替え
+                for (size_t i = pointLightIntensity.size(); i < pointLightMax; ++i)
+                {
+                    // 影響度をソートしながら同じサイズまで追加
+                    addSort(pointLights, pointLightIntensity, getLightIntensity(objPos, pointLights[i]));
+                }
+
+                // とりあえず追加＆ソートして最後を削除
+                pointLights.emplace_back(l->color, l->transform->position, rangeInv);
+                addSort(pointLights, pointLightIntensity, getLightIntensity(objPos, pointLights.back()));
+                pointLights.pop_back();
+                pointLightIntensity.pop_back();
+            }
             break;
+
+        // スポットライトの追加
         case LightType_Spot:
-            g.positionOrDirWS = world.Translation();
-            g.spotDirWS = -world.Forward();
-            g.rangeOrInvCos = 1.0f / l->range;
-            g.spotOuterCos = cosf(DirectX::XMConvertToRadians(l->spotAngle * 0.5f));
+            if (spotLights.size() < spotLightMax)
+            {
+                spotLights.emplace_back(l->color,
+                    l->transform->position, rangeInv,
+                    l->transform->forward, cosf(DirectX::XMConvertToRadians(l->spotAngle * 0.5f))
+                );
+            }
+            else
+            {
+                // 影響度がなければ作成して並び替え
+                for (size_t i = spotLightIntensity.size(); i < spotLightMax; ++i)
+                {
+                    // 影響度をソートしながら同じサイズまで追加
+                    addSort(spotLights, spotLightIntensity, getLightIntensity(objPos, spotLights[i]));
+                }
+
+                // とりあえず追加＆ソートして最後を削除
+                spotLights.emplace_back(l->color,
+                    l->transform->position, rangeInv,
+                    l->transform->forward, cosf(DirectX::XMConvertToRadians(l->spotAngle * 0.5f))
+                );
+                addSort(spotLights, spotLightIntensity, getLightIntensity(objPos, spotLights.back()));
+                spotLights.pop_back();
+                spotLightIntensity.pop_back();
+            }
             break;
         }
-        gpuLights_.push_back(g);
     }
 
-    // --- バッファ容量を確保 ---
-    if (capacity_ < gpuLights_.size() || lightBuf_ == nullptr)
+    // ライトの合計数がオーバーしていたら削減
+    if (pointLights.size() + spotLights.size() > lightCountMax)
     {
-        capacity_ = gpuLights_.size();
-        D3D11_BUFFER_DESC bd{};
-        bd.ByteWidth = UINT(sizeof(GPULight) * capacity_);
-        bd.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-        bd.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
-        bd.StructureByteStride = sizeof(GPULight);
-        bd.Usage = D3D11_USAGE_DYNAMIC;
-        bd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-        lightBuf_.Reset();
-        D3DManager::getInstance()->GetDevice()->CreateBuffer(&bd, nullptr, lightBuf_.GetAddressOf());
+        // 影響度を整える
+        for (size_t i = pointLightIntensity.size(); i < pointLightMax; ++i)
+        {
+            addSort(pointLights, pointLightIntensity, getLightIntensity(objPos, pointLights[i]));
+        }
+        for (size_t i = spotLightIntensity.size(); i < spotLightMax; ++i)
+        {
+            addSort(spotLights, spotLightIntensity, getLightIntensity(objPos, spotLights[i]));
+        }
 
-        // SRV
-        D3D11_SHADER_RESOURCE_VIEW_DESC sd{};
-        sd.Format = DXGI_FORMAT_UNKNOWN;  // Structured
-        sd.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
-        sd.Buffer.NumElements = UINT(capacity_);
-        D3DManager::getInstance()->GetDevice()->CreateShaderResourceView(lightBuf_.Get(), &sd, lightSRV_.GetAddressOf());
+        // 影響度の小さいほうを削除
+        while (pointLights.size() + spotLights.size() > lightCountMax)
+        {
+            bool popPoint = spotLights.size() == 0 ||
+                pointLights.size() > 0 && pointLightIntensity.back() < spotLightIntensity.back();
+
+            if (popPoint)
+            {
+                pointLights.pop_back();
+                pointLightIntensity.pop_back();
+            }
+            else
+            {
+                spotLights.pop_back();
+                spotLightIntensity.pop_back();
+            }
+        }
     }
 
-    // --- Map & Copy ---
-    if (!gpuLights_.empty())
-    {
-        D3D11_MAPPED_SUBRESOURCE ms{};
-        D3DManager::getInstance()->GetContext()->Map(lightBuf_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &ms);
-        memcpy(ms.pData, gpuLights_.data(), sizeof(GPULight) * gpuLights_.size());
-        D3DManager::getInstance()->GetContext()->Unmap(lightBuf_.Get(), 0);
-    }
-    /*
-    // --- LightCount CB 更新 ---
-    struct { uint32_t Count; float pad[3]; } meta = { uint32_t(gpuLights_.size()) };
-    if (!metaCB_)
-    {
-        D3D11_BUFFER_DESC bd{};
-        bd.ByteWidth = 16;
-        bd.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
-        bd.Usage = D3D11_USAGE_DYNAMIC;
-        bd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-        D3DManager::instance->GetDevice()->CreateBuffer(&bd, nullptr, metaCB_.GetAddressOf());
-    }
-    D3DManager::instance->GetContext()->UpdateSubresource(metaCB_.Get(), 0, nullptr, &meta, 0, 0);
-*/
-    // ライト
-    ID3D11ShaderResourceView* srv = lightSRV_.Get();
-    D3DManager::getInstance()->GetContext()->PSSetShaderResources(UNIDX_PS_SLOT_LIGHTS, 1, &srv);
+    // 定数バッファ更新
+    ConstantBufferLightPerObject cb{};
+    cb.pointLightCount = uint32_t(pointLights.size());
+    std::copy(pointLights.begin(), pointLights.end(), cb.pointLights);
+    cb.spotLightCount = uint32_t(spotLights.size());
+    std::copy(spotLights.begin(), spotLights.end(), cb.spotLights);
+    D3DManager::getInstance()->GetContext()->UpdateSubresource(constantBufferLightPerObject.Get(), 0, nullptr, &cb, 0, 0);
+
+    ID3D11Buffer* cbs[1] = { constantBufferLightPerObject.Get() };
+    D3DManager::getInstance()->GetContext()->PSSetConstantBuffers(CB_LightPerObject, 1, cbs);
 }
 
 

@@ -46,9 +46,6 @@ public:
 		m_swapChain->Present(1, 0);
 	}
 
-	// 定数バッファ更新
-	void UpdateConstantBufferPerFrame();
-
 	const Vector2& getScreenSize() const { return screenSize; }
 
 	// レンダーモード
@@ -66,8 +63,6 @@ private:
 	ComPtr<ID3D11Texture2D> m_depthStencilBuffer; // デプス&ステンシルバッファ
 	ComPtr<ID3D11DepthStencilView> m_depthStencilView;
 	ComPtr<ID3D11DepthStencilState> m_depthStencilState;
-
-	ComPtr<ID3D11Buffer> constantBufferPerFrame; // フレームごとにGPUで共通利用する定数バッファ
 };
 
 } // UniDx

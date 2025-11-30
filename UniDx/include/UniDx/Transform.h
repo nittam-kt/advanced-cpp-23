@@ -26,6 +26,9 @@ public:
     // ワールド空間のプロパティ
     Property<Vector3> position;
     Property<Quaternion> rotation;
+    Property<Vector3> forward;
+    Property<Vector3> up;
+    Property<Vector3> right;
 
     Transform* parent = nullptr;
 
@@ -59,66 +62,7 @@ public:
         return m_worldMatrix;
     }
 
-    Transform()
-        : localPosition(
-            // getter
-            [this]() { return _localPosition; },
-            // setter
-            [this](Vector3 v) { _localPosition = v; m_dirty = true; }
-        ),
-        localRotation(
-            [this]() { return _localRotation; },
-            [this](Quaternion q) { _localRotation = q; m_dirty = true; }
-        ),
-        localScale(
-            [this]() { return _localScale; },
-            [this](Vector3 v) { _localScale = v; m_dirty = true; }
-        ),
-        position(
-            // getter: グローバル座標
-            [this]() {
-                updateMatrices();
-                return m_worldMatrix.Translation();
-            },
-            // setter: グローバル座標からlocalPositionを逆算
-            [this](Vector3 worldPos) {
-                if (parent) {
-                    parent->updateMatrices();
-                    Matrix invParent = parent->m_worldMatrix.Invert();
-                    _localPosition = Vector3::Transform(worldPos, invParent);
-                } else {
-                    _localPosition = worldPos;
-                }
-                m_dirty = true;
-            }
-        ),
-        rotation(
-            [this]() {
-                updateMatrices();
-                // ワールド行列からクォータニオンを取得
-                Vector3 s, t;
-                Quaternion q;
-                m_worldMatrix.Decompose(s, q, t);
-                return q;
-            },
-            [this](Quaternion worldRot) {
-                if (parent) {
-                    parent->updateMatrices();
-                    // 親のワールド回転の逆を掛けてローカル回転を算出
-                    Quaternion parentWorldRot, parentWorldRotInv;
-                    Vector3 s, t;
-                    parent->m_worldMatrix.Decompose(s, parentWorldRot, t);
-                    parentWorldRot.Inverse(parentWorldRotInv);
-                    _localRotation = Quaternion::Concatenate(worldRot, parentWorldRotInv);
-                }
-                else {
-                    _localRotation = worldRot;
-                }
-                m_dirty = true;
-            }
-        )
-    {
-    }
+    Transform();
 
     virtual ~Transform();
 

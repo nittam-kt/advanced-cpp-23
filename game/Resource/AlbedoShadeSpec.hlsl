@@ -73,21 +73,21 @@ cbuffer LightPerFrame : register(b11)
     float4 ambientColor;
     float4 directionalColor;
     float3 directionW;
-    uint pad;
+    uint   pad;
 };
 struct PointLight
 {
     float4 color;
     float3 positionW;
-    float rangeInv;
+    float  rangeInv;
 };
 struct SpotLight
 {
     float4 color;
     float3 positionW;
-    float rangeInv;
+    float  rangeInv;
     float3 directionW;
-    float outerCos;
+    float  outerCos;
 };
 cbuffer LightPerObject : register(b12)
 {
@@ -104,7 +104,7 @@ SamplerState sampler0 : register(s4);
 
 
 void EvaluatePointLight(in PointLight L, in float3 posW, in half3 nrmW,
-    out half NdotL, out half atten)
+    out half NdotL, out half NdotH, out half atten)
 {
     half3 Ldir = L.positionW - posW;
     half dist = length(Ldir);
@@ -112,10 +112,15 @@ void EvaluatePointLight(in PointLight L, in float3 posW, in half3 nrmW,
     Ldir /= dist;
     atten = saturate(1 - dist * L.rangeInv);
     NdotL = dot(nrmW, Ldir);
+    
+    half3 V = normalize(cameraPosW - posW);
+    half3 H = normalize(Ldir + V);
+    NdotH = dot(nrmW, H);
+
 }
 
 void EvaluateSpotLight(in SpotLight L, in float3 posW, in half3 nrmW,
-    out half NdotL, out half atten)
+    out half NdotL, out half NdotH, out half atten)
 {
     half3 Ldir = L.positionW - posW;
     half dist = length(Ldir);
@@ -125,11 +130,16 @@ void EvaluateSpotLight(in SpotLight L, in float3 posW, in half3 nrmW,
     {
         atten = 0;
         NdotL = 0;
+        NdotH = 0;
     }
     else
     {
         atten = saturate(1 - dist * L.rangeInv) * saturate((spotCos - L.outerCos) / (1 - L.outerCos));
         NdotL = dot(nrmW, Ldir);
+
+        half3 V = normalize(cameraPosW - posW);
+        half3 H = normalize(Ldir + V);
+        NdotH = dot(nrmW, H);
     }
 }
 
@@ -144,31 +154,44 @@ half4 PS(PSInput In) : SV_Target0
     half3 N = normalize(In.nrmW);
 
     // ライトループ
-    half3 diffAccum;            // 拡散光
-    diffAccum = ambientColor;   // 環境光
+    const half shininess = 20;
+    const half3 specularColor = half3(0.1, 0.1, 0.1);
+
+    half3 diffAccum;          // 拡散光
+    half3 spec;               // 鏡面反射光
+    diffAccum = ambientColor; // 環境光
     diffAccum += directionalColor * saturate( dot(N, directionW) );    // ディレクショナルライト
-    half NdotL, atten;
+
+    float3 L = normalize(-directionW);
+    float3 V = normalize(cameraPosW - In.posW);
+    half3 H = normalize(L + V);
+    spec = directionalColor * pow(saturate(dot(N, H)), shininess);
+
+    half NdotL, NdotH, atten;
     uint i;
 
     // ポイントライト
     [loop]
     for (i = 0; i < pointLightCount; ++i)
     {
-        EvaluatePointLight(pointLights[i], In.posW, N, NdotL, atten);
+        EvaluatePointLight(pointLights[i], In.posW, N, NdotL, NdotH, atten);
         diffAccum += pointLights[i].color * saturate(atten * NdotL);
+        spec += pointLights[i].color * pow(saturate(NdotH), shininess);
     }
 
     // スポットライト
     [loop]
     for (i = 0; i < spotLightCount; ++i)
     {
-        EvaluateSpotLight(spotLights[i], In.posW, N, NdotL, atten);
+        EvaluateSpotLight(spotLights[i], In.posW, N, NdotL, NdotH, atten);
         diffAccum += spotLights[i].color * saturate(atten * NdotL);
+        spec += pointLights[i].color * pow(saturate(NdotH), shininess);
     }
 
     // カラー合成
-    half4 color = half4(diffAccum, 1) * albedo * (half4)baseColor;
+    diffAccum = smoothstep(0.2, 0.5, diffAccum);
+    half4 color = half4(diffAccum, 1) * albedo + half4(spec * specularColor, 0);
 
     // 最終カラーを出力
-    return color;
+    return color * (half4) baseColor;;
 }

@@ -103,6 +103,7 @@ bool Shader::compile(const std::wstring& filePath, const D3D11_INPUT_ELEMENT_DES
 
 	std::filesystem::path path(filePath);
 	fileName = path.filename();
+//	Debug::Log(fileName + L"は正常にコンパイルできました");
 
 	return true;
 }

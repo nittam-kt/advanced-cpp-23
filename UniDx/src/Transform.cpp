@@ -4,7 +4,159 @@
 namespace UniDx
 {
 
-Transform::~Transform() 
+// コンストラクタ
+Transform::Transform()
+    : localPosition(
+        [this]() { return _localPosition; },
+        [this](Vector3 v) { _localPosition = v; m_dirty = true; }
+    ),
+    localRotation(
+        [this]() { return _localRotation; },
+        [this](Quaternion q) { _localRotation = q; m_dirty = true; }
+    ),
+    localScale(
+        [this]() { return _localScale; },
+        [this](Vector3 v) { _localScale = v; m_dirty = true; }
+    ),
+    position(
+        // getter: グローバル座標
+        [this]() {
+            updateMatrices();
+            return m_worldMatrix.Translation();
+        },
+        // setter: グローバル座標からlocalPositionを逆算
+        [this](Vector3 worldPos) {
+            if (parent) {
+                parent->updateMatrices();
+                Matrix invParent = parent->m_worldMatrix.Invert();
+                _localPosition = Vector3::Transform(worldPos, invParent);
+            }
+            else {
+                _localPosition = worldPos;
+            }
+            m_dirty = true;
+        }
+    ),
+    rotation(
+        [this]() {
+            updateMatrices();
+            // ワールド行列からクォータニオンを取得
+            Vector3 s, t;
+            Quaternion q;
+            m_worldMatrix.Decompose(s, q, t);
+            return q;
+        },
+        [this](Quaternion worldRot) {
+            if (parent) {
+                parent->updateMatrices();
+                // 親のワールド回転の逆を掛けてローカル回転を算出
+                Quaternion parentWorldRot, parentWorldRotInv;
+                Vector3 s, t;
+                parent->m_worldMatrix.Decompose(s, parentWorldRot, t);
+                parentWorldRot.Inverse(parentWorldRotInv);
+                _localRotation = Quaternion::Concatenate(worldRot, parentWorldRotInv);
+            }
+            else {
+                _localRotation = worldRot;
+            }
+            m_dirty = true;
+        }
+    ),
+    forward(
+        // getter: ワールド空間の前方向
+        [this]() {
+            return getLocalToWorldMatrix().Forward();
+        },
+        // setter: worldForward に向くようワールド回転を設定
+        [this](Vector3 worldForward) {
+            if (worldForward.Length() < 1e-6f) return;
+            Vector3 f = worldForward;
+            f.Normalize();
+
+            // up が前方向とほぼ平行なら代替 up を使う
+            Vector3 up = Vector3::UnitY;
+            if (std::abs(f.Dot(up)) > 0.999f) up = Vector3::UnitX;
+
+            // CreateWorld の引数は (position, forward, up)
+            Matrix m = Matrix::CreateWorld(Vector3::Zero, f, up);
+            Vector3 s, t;
+            Quaternion q;
+            m.Decompose(s, q, t);
+            rotation = q; // rotation プロパティの setter を使ってローカル回転を設定
+        }
+    ),
+    up(
+        // getter: ワールド空間の上方向
+        [this]() {
+            return getLocalToWorldMatrix().Up();
+        },
+        // setter: worldUp に向くようワールド回転を設定（可能な限り現在の forward を保持）
+        [this](Vector3 worldUp) {
+            if (worldUp.Length() < 1e-6f) return;
+            Vector3 upVec = worldUp;
+            upVec.Normalize();
+
+            // 現在の forward を取得（ワールド）
+            Vector3 currF = TransformDirection(Vector3::UnitZ);
+
+            // 右方向を計算（forward x up）
+            Vector3 right = currF.Cross(upVec);
+            if (right.Length() < 1e-6f) {
+                // forward と up がほぼ平行 -> 別の基準を使う
+                currF = Vector3::UnitZ;
+                right = currF.Cross(upVec);
+            }
+            right.Normalize();
+
+            // 再計算した forward を正規化
+            Vector3 f = upVec.Cross(right);
+            f.Normalize();
+
+            Matrix m = Matrix::CreateWorld(Vector3::Zero, f, upVec);
+            Vector3 s, t;
+            Quaternion q;
+            m.Decompose(s, q, t);
+            rotation = q;
+        }
+    ),
+    right(
+        // getter: ワールド空間の右方向
+        [this]() {
+            return getLocalToWorldMatrix().Right();
+        },
+        // setter: worldRight に向くようワールド回転を設定（可能な限り現在の up を保持）
+        [this](Vector3 worldRight) {
+            if (worldRight.Length() < 1e-6f) return;
+            Vector3 rVec = worldRight;
+            rVec.Normalize();
+
+            // 現在の up を取得（ワールド）
+            Vector3 currUp = TransformDirection(Vector3::UnitY);
+
+            // forward を計算 (up x right)
+            Vector3 f = currUp.Cross(rVec);
+            if (f.Length() < 1e-6f) {
+                // up と right がほぼ平行 -> 別の基準を使う
+                currUp = Vector3::UnitY;
+                f = currUp.Cross(rVec);
+            }
+            f.Normalize();
+
+            // 再計算した up を正規化
+            Vector3 upVec = rVec.Cross(f);
+            upVec.Normalize();
+
+            Matrix m = Matrix::CreateWorld(Vector3::Zero, f, upVec);
+            Vector3 s, t;
+            Quaternion q;
+            m.Decompose(s, q, t);
+            rotation = q;
+        }
+    )
+{
+}
+
+Transform::~Transform()
 {
     for (auto& child : children)
     {

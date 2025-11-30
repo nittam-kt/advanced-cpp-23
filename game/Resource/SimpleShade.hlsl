@@ -1,13 +1,22 @@
 // ----------------------------------------------------------
+// テクスチャ１枚、環境光、ディレクショナルライト、
+// マテリアルカラーだけの単純な陰影シェーダー
+// ----------------------------------------------------------
+
+// ----------------------------------------------------------
 // 頂点シェーダ
 // ----------------------------------------------------------
+// カメラ定数バッファ
+cbuffer VSConstants : register(b8)
+{
+    float4x4 view;
+    float4x4 projection;
+};
 
 // 行列定数バッファ
 cbuffer VSConstants : register(b9)
 {
     float4x4 world;
-    float4x4 view;
-    float4x4 projection;
 };
 
 // 頂点シェーダーへ入力するデータ
@@ -20,10 +29,9 @@ struct VSInput
 // 頂点シェーダーから出力するデータ
 struct PSInput
 {
-    float4 pos : SV_Position;   // 頂点の座標(射影座標系)
-    float3 nrm : NORMAL;        // 法線
+    float4 posH : SV_Position;  // 頂点の座標(射影座標系)
+    float3 nrmW : TEXCOORD0;    // 法線
 };
-
 
 // 頂点シェーダー
 PSInput VS(VSInput vin)
@@ -31,76 +39,47 @@ PSInput VS(VSInput vin)
     PSInput Out;
 
     float4 p = float4(vin.pos.xyz, 1);
-    p = mul(world, p);
-    p = mul(view, p);
-    p = mul(projection, p);
-    Out.pos = p;
+    p = mul(world, p);      // ワールド変換
+    p = mul(view, p);       // ビュー変換
+    p = mul(projection, p); // プロジェクション変換
+    Out.posH = p;
 
     float3x3 world3x3 = (float3x3) world;
-    Out.nrm = mul(world3x3, vin.nrm);
+    Out.nrmW = mul(world3x3, vin.nrm);
     return Out;
 }
 
- 
+
 // ----------------------------------------------------------
 // ピクセルシェーダ
 // ----------------------------------------------------------
-
 // マテリアル定数バッファ
 cbuffer PSConstants : register(b10)
 {
     float4 baseColor;
 };
 
-struct GPULight
+// 共通ライト
+cbuffer LightPerFrame : register(b11)
 {
-    float3 posOrDirWS;
-    float rangeOrInvCos;
-    float4 color; // rgb=Color, a=Intensity
-    float3 spotDirWS;
-    float spotOuterCos;
-    uint type;
-    uint pad0;
-    uint pad1;
-    uint pad2;
+    float4 ambientColor;
+    float4 directionalColor;
+    float3 directionW;
+    uint pad;
 };
-
-// ライト（UNIDX_PS_SLOT_ALL_LIGHTS)
-StructuredBuffer<GPULight> allLights : register(t0);
-
-
-//  ランバート拡散
-float4 EvaluateLight(in GPULight L, in float3 posW, in float3 nrmW)
-{
-    float3 Ldir; // from point to light (方向ライトなら -dir)
-
-    Ldir = -L.posOrDirWS; // store as -dir in posOrDirWS
-
-    float NdotL = dot(Ldir, nrmW);
-    return L.color * saturate(NdotL);
-}
-
 
 // ピクセルシェーダー
 float4 PS(PSInput In) : SV_Target0
 {
     // 明示的に法線を正規化（モデルスケール非均等だと崩れるため）
-    float3 N = normalize(In.nrm);
+    float3 N = normalize(In.nrmW);
 
     // ライトループ
-    float4 diffAccum = 0;
-    [loop]
-    for (uint k = 0; k < 1; ++k)
-    {
-        GPULight L = allLights[k];
-        diffAccum += EvaluateLight(L, In.pos.xyz, N);
-    }
+    float4 diffAccum = ambientColor; // 環境光
+    diffAccum += directionalColor * saturate(dot(N, directionW)); // ディレクショナルライト
 
-    // 環境光。ここでは固定
-    const float4 Ambient = float4(0.1f, 0.1f, 0.1f, 1);
-
-    // 最終の色
-    float4 color = (diffAccum + Ambient) * baseColor;
+    // カラー合成
+    float4 color = diffAccum * baseColor;
 
     // テクスチャの色を出力
     return color;

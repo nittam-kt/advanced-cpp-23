@@ -1,21 +1,28 @@
 // ----------------------------------------------------------
 // 頂点
 // ----------------------------------------------------------
+// カメラ定数バッファ
 cbuffer VSConstants : register(b8)
 {
-    float4 time;
+    float4x4 view;
+    float4x4 projection;
+    float3 cameraPosW;
+    float cameraNear;
+    float3 cameraForwardW;
+    float cameraFar;
+    float4 time; // (t, dt, 1/dt, frameCount)
 };
+
 cbuffer VSConstants : register(b9)
 {
     float4x4 world;
-    float4x4 view;
-    float4x4 projection;
 };
 
 // 頂点シェーダーへ入力するデータ
 struct VSInput
 {
     float3 pos : POSITION;
+    float3 nrm : NORMAL;
 };
 
 

@@ -221,15 +221,15 @@ void Engine::lateUpdate()
 //
 void Engine::render()
 {
-    // フレーム単位の定数バッファ更新
-    D3DManager::getInstance()->UpdateConstantBufferPerFrame();
-
     // ライトバッファの更新と転送
     LightManager::getInstance()->updateLightCBuffer();
 
     Camera* camera = Camera::main;
     if (camera != nullptr)
     {
+        // カメラ単位の定数バッファ更新
+        camera->UpdateConstantBuffer();
+
         // 不透明描画
         D3DManager::getInstance()->setCurrentCurrentRenderingMode(RenderingMode_Opaque);
 

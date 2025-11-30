@@ -79,8 +79,6 @@ void Image::Render(const Matrix& proj) const
 	// ─ ワールド行列を位置に合わせて作成
 	ConstantBufferPerObject cb{};
 	cb.world = transform->getLocalToWorldMatrix();
-	cb.view = Matrix::Identity;
-	cb.projection = proj;
 
 	// 定数バッファ更新
 	D3DManager::getInstance()->GetContext()->UpdateSubresource(constantBufferPerObject.Get(), 0, nullptr, &cb, 0, 0);

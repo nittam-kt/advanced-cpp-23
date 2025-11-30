@@ -6,6 +6,7 @@
 #include <UniDx/Camera.h>
 #include <UniDx/Material.h>
 #include <UniDx/SceneManager.h>
+#include <UniDx/LightManager.h>
 
 namespace UniDx{
 
@@ -34,18 +35,16 @@ void Renderer::OnEnable()
 // -----------------------------------------------------------------------------
 // 現在の姿勢とカメラをシェーダーの定数バッファに転送
 // -----------------------------------------------------------------------------
-void Renderer::updatePositionCameraCBuffer(const UniDx::Camera& camera) const
+void Renderer::updatePositionCameraCBuffer() const
 {
     // ワールド行列を transform から合わせて作成
     ConstantBufferPerObject cb{};
     cb.world = transform->getLocalToWorldMatrix();
-    cb.view = camera.GetViewMatrix();
-    cb.projection = camera.GetProjectionMatrix(16.0f/9.0f);
+    D3DManager::getInstance()->GetContext()->UpdateSubresource(constantBufferPerObject.Get(), 0, nullptr, &cb, 0, 0);
 
     // 定数バッファ更新
     ID3D11Buffer* cbs[1] = { constantBufferPerObject.Get() };
     D3DManager::getInstance()->GetContext()->VSSetConstantBuffers(CB_PerObject, 1, cbs);
-    D3DManager::getInstance()->GetContext()->UpdateSubresource(constantBufferPerObject.Get(), 0, nullptr, &cb, 0, 0);
 }
 
 
@@ -64,6 +63,15 @@ bool Renderer::setMaterialForRender() const
 
 
 // -----------------------------------------------------------------------------
+// MeshRendererのコンストラクタ
+// -----------------------------------------------------------------------------
+MeshRenderer::MeshRenderer()
+{
+    lightCount = PointLightCountMax + SpotLightCountMax;
+}
+
+
+// -----------------------------------------------------------------------------
 // メッシュを使って描画
 // -----------------------------------------------------------------------------
 void MeshRenderer::Render(const Camera& camera) const
@@ -78,7 +86,10 @@ void MeshRenderer::Render(const Camera& camera) const
     }
 
     // 現在のTransformとカメラの情報をシェーダーのConstantBufferに転送
-    updatePositionCameraCBuffer(camera);
+    updatePositionCameraCBuffer();
+
+    // ライト影響をConstantBufferに転送
+    LightManager::getInstance()->updateLightCBufferObject(transform->position, lightCount);
 
     //-----------------------------
     // 描画実行

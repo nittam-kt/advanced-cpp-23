@@ -62,7 +62,7 @@ protected:
     ComPtr<ID3D11Buffer> constantBufferPerObject;
 
     virtual void OnEnable() override;
-    virtual void updatePositionCameraCBuffer(const UniDx::Camera& camera) const;
+    virtual void updatePositionCameraCBuffer() const;
     virtual bool setMaterialForRender() const;
 };
 
@@ -74,6 +74,9 @@ class MeshRenderer : public Renderer
 {
 public:
     Mesh mesh;
+    int lightCount;
+
+    MeshRenderer();
 
     // メッシュを使って描画
     virtual void Render(const Camera& camera) const override;

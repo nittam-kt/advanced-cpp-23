@@ -25,9 +25,14 @@ public:
         return XMMatrixPerspectiveFovLH(DirectX::XMConvertToRadians(fov), aspect, nearClip, farClip);
     }
 
+    // 定数バッファ更新
+    void UpdateConstantBuffer();
+
 protected:
     virtual void OnEnable() override;
     virtual void OnDisable() override;
+
+    ComPtr<ID3D11Buffer> constantBufferPerCamera; // カメラごとにGPUで共通利用する定数バッファ
 };
 
 } // namespace UniDx
