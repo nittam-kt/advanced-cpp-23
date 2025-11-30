@@ -11,10 +11,12 @@
 #include <UniDx/TextMesh.h>
 #include <UniDx/Font.h>
 #include <UniDx/Image.h>
+#include <UniDx/LightManager.h>
 
 #include "CameraBehaviour.h"
 #include "Player.h"
 #include "MapData.h"
+#include "LightController.h"
 
 using namespace std;
 using namespace UniDx;
@@ -59,8 +61,13 @@ unique_ptr<GameObject> createMap(GameObject* player)
 
     // シェーダを指定してコンパイル
     wallMat->shader.compile<VertexPNT>(L"Resource/AlbedoShade.hlsl");
-    floorMat->shader.compile<VertexPNT>(L"Resource/SimpleShade.hlsl");
+    floorMat->shader.compile<VertexPNT>(L"Resource/AlbedoShade.hlsl");
     floorMat->color = Color(0.85f, 0.8f, 0.85f);
+
+    // 床テクスチャ作成
+    auto floorTex = std::make_shared<Texture>();
+    floorTex->Load(L"Resource/wood-2.png");
+    floorMat->AddTexture(std::move(floorTex));
 
     // 壁テクスチャ作成
     auto wallTex = std::make_shared<Texture>();
@@ -179,7 +186,7 @@ unique_ptr<Scene> CreateDefaultScene()
 
     // ボール
     auto ball = make_unique<GameObject>(L"ボール", Vector3(0, 2, 1),
-        SphereRenderer::create<VertexPN>(L"Resource/VertexTest.hlsl"));
+        SphereRenderer::create<VertexPN>(L"Resource/PixelTest1.hlsl"));
     ball->transform->localScale = Vector3(3, 3, 3);
 
     // -- カメラ --
@@ -187,10 +194,26 @@ unique_ptr<Scene> CreateDefaultScene()
     cameraBehaviour->player = playerObj->GetComponent<Player>(true);
 
     // -- ライト --
-    auto light = make_unique<GameObject>(L"ライト",
-        make_unique<Light>());
-    light->transform->localRotation = Quaternion::CreateFromYawPitchRoll(0.2f, 0.9f, 0);
+    LightManager::getInstance()->ambientColor = Color(0.3f, 0.3f, 0.3f, 1.0f);
 
+    auto lights = make_unique<GameObject>(L"ライト群");
+    auto light = make_unique<GameObject>(L"ディレクショナルライト", make_unique<Light>(), make_unique<LightController>());
+    light->transform->localPosition = Vector3(4, 3, 0);
+    Transform::SetParent(move(light), lights->transform);
+/*
+    for (int i = 0; i < 4; ++i)
+    {
+        for (int j = 0; j < 4; ++j)
+        {
+            auto l = make_unique<Light>();
+            l->type = LightType_Point;
+            l->range = 5.0f;
+            auto light = make_unique<GameObject>(L"ポイントライト", move(l), make_unique<LightController>());
+            light->transform->localPosition = Vector3(8.0f * j - 12.0f, 3,  8.0f * i - 12.0f);
+            Transform::SetParent(move(light), lights->transform);
+        }
+    }
+*/    
     // -- UI --
     auto font = make_shared<Font>();
     font->Load(L"Resource/M PLUS 1.spritefont");
@@ -217,7 +240,7 @@ unique_ptr<Scene> CreateDefaultScene()
             move(ball)
         ),
 
-        move(light),
+        move(lights),
 
         make_unique<GameObject>(L"カメラルート", Vector3(0, 3, -5),
             make_unique<Camera>(),
